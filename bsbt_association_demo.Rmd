@@ -1,0 +1,217 @@
+---
+title: "BSBT6075 - Bioinformatics Demo"
+author: "Maizy Brasher"
+date: "10-06-2025"
+output: html_document
+---
+
+## Before You Begin
+
+This demo assumes you have completed the following requirements:
+
+-   Installed R and Rstudio (<https://posit.co/download/rstudio-desktop/>)
+
+-   Downloaded the demo data set
+
+## R Set Up
+
+#### Loading Packages
+
+R comes with MANY built in functions, but since it is FREE and OPEN-SOURCE, we can also take advantage of functions other people have created and made available in the form of R packages. Load the packages required for this demo by running the two code chunks below.
+
+```{r setup, include=FALSE}
+# This chunk checks if the appropriate packages are installed, and installs them if needed
+knitr::opts_chunk$set(echo = TRUE)
+package_names=c("data.table", "ggplot2", "dplyr")
+if (!requireNamespace(package_names, quietly = TRUE)) {
+  install.packages(package_names, dependencies = TRUE)
+}
+```
+
+```{r, echo = FALSE}
+# This chunk load the packages we need for this session
+library(data.table)
+library(ggplot2)
+library(dplyr)
+```
+
+#### Setting Your Working Directory
+
+By default, R will run everything you do in whatever folder you are currently working in. To check what your current working directory is, run this code:
+
+```{r}
+getwd()
+```
+
+If your current working directory is not the folder you made for this class, change your working directory by putting in the path to your folder in the command below. You can also set your working directory by going to the "Session" menu at the top your screen, then hovering over "Set Working Directory", clicking "Choose directory", and navigating to the folder through the file finder.
+
+```{r, eval = FALSE}
+setwd("this_is/the_path/to_your/folder")
+#for example mine would look like: setwd("/Users/brasherm/Desktop/bsbt_demo")
+```
+
+## Our Data Set
+
+The data set we will use today is a simulated version of data you might use to run genetic analyses. Most genetic data sets are protected by data privacy laws (HIPPA, GDPR, etc.) and are accessibly only by completing specific data access requirements. Since it is not practical to have all of you gain access to a protected data set, I have simulated variables for the purposes of this demonstration.
+
+#### Reading in the Data
+
+There are many ways to load data into R. This is just my favorite. The fread() function comes from the data.table package that we loaded. It allows for efficient reading in of large data sets, and flexible file formatting, which are important when working with genetic data sets
+
+```{r}
+data <- fread("demo_data.txt", data.table = FALSE)
+```
+
+#### Investigating the Data
+
+In the swirl tutorials, you should have learned some commands you can use to check out the format of the data. Type your favorite in the box below and/or run some of the ones I've provided:
+
+```{r}
+### ADD YOUR COMMANDS HERE
+
+```
+
+```{r}
+dim(data)
+head(data)
+colnames(data)
+```
+
+What did you learn about the data?
+
+-   How many SNPs are in our data set?
+
+-   What other variables do we have?
+
+-   What does the distribution of the phenotype look like?
+
+    ```{r}
+    ### ADD YOUR CODE HERE TO LOOK AT THE DISTRIBUTION OF THE PHENOTYPE
+    ```
+
+You can also look in the Environment panel in the top right and click on the name of the data set ("data") to look at the full data set.
+
+## SNP Association Testing
+
+#### Look at Individual SNP Effects
+
+We can look at the effect of an individual SNP on our phenotype by creating a box plot, which will show us the distribution of the phenotype by the number of risk alleles of the SNP-of-interest. We will do this using the ggplot2 package, which makes prettier, more flexible plots than those made with built in R plotting commands.
+
+```{r}
+# Edit this line to choose whichever SNP you want to look at
+snp <- "SNP1"
+
+# Look at the genotype counts for this SNP
+table(data[[snp]])
+
+# Create the box plot
+ggplot(data, aes(x = as.factor(.data[[snp]]), y = phenotype, group = .data[[snp]])) +
+  geom_boxplot(fill = "cornflowerblue") +
+  ggtitle(paste0("Distribution Across Genotypes for ", snp)) +
+  labs(x = paste0(snp, " Genotype (0/1/2 Effect Alleles)"), y = "Phenotype Value") +
+  theme_bw()
+```
+
+On average, is there a difference in phenotype based on the number of risk alleles for this SNP?
+
+#### Accounting for covariates
+
+Although our phenotype is simulated, real complex traits are affected by many different variables that should be accounted for appropriately when considering association between genotype and phenotype. If our phenotype is meant to represent a complex biomedical trait, what variables in our data set might we want to control for in our association test?
+
+```{r}
+# run the linear regression model
+model_out <- glm(phenotype ~ data[[snp]] + age + sex + PC1 + PC2 + PC3 + PC4 + PC5, data=data)
+summary(model_out)
+```
+
+Take a look at the output from the model. What do you notice?
+
+-   What is the effect size of the SNP when you account for covariates?
+
+-   What is the p-value?
+
+-   What other variables in the model are significant?
+
+-   What is the definition of "significant" in this case?
+
+#### Aggregating Effects Across SNPs
+
+Since complex traits are often highly polygenic, individual SNP effects might be very small, but add up to larger effects when we aggregate effects across SNPs. Run the chunk below to calculate the effect of each SNP.
+
+```{r}
+# Create a new data frame to store our output model coefficients
+summary_keep <- data.frame(SNP = c(paste0("SNP", 1:8)),
+                           P_snp = NA,
+                           beta_snp = NA)
+
+# Loop through each SNP, run association test, keep effect size and p-value
+for (i in 1:8) {
+  snp = paste0("SNP",i)
+  
+  out <- glm(phenotype ~ data[[snp]] + age + sex + PC1 + PC2 + PC3 + PC4 + PC5, data=data)
+  summary(out)
+  
+  summary_keep[i,3] <- summary(out)$coefficients[2,1]
+  summary_keep[i,2] <- summary(out)$coefficients[2,4]
+}
+
+# Take a look at the output
+print(summary_keep)
+```
+
+Now that we have the effect of each SNP, we can create a very simple polygenic risk score (PRS or PGS) by calculating, for each individual, the sum of their risk alleles across SNPs, each weighted by the effect of that SNP.
+
+```{r}
+beta_vector <- summary_keep$beta_snp
+cols <- c(paste0("SNP", 1:8))
+
+data <- data %>%
+  rowwise() %>%
+  mutate(
+    PRS = sum(c_across(all_of(cols)) * beta_vector)
+  ) %>%
+  ungroup()
+```
+
+Since we now have a continuous PRS value, calculate the deciles of the PRS so we can make a clear box plot.
+
+```{r}
+data$PRS_decile <- cut(data$PRS,
+                         breaks=quantile(data$PRS, probs=seq(0,1,0.1)),
+                         include.lowest=TRUE,
+                         labels=paste0("D", c(1:10)))
+```
+
+Run the chunk below to create a box plot comparing phenotype values by decile of the PRS.
+
+```{r}
+ggplot(data, aes(x = PRS_decile, y = phenotype, group = PRS_decile)) +
+  geom_boxplot(fill = "cornflowerblue") +
+  ggtitle("Phenotype Value by Aggregate Genetic Score Decile") +
+  labs(x = "Aggregate Genetic Score Decile", y = "Phenotype Value") +
+  theme_bw()
+```
+
+There are other ways we can visualize this relationship. Un-comment (remove the '\#') either of the below code chunks to test different plots.
+
+```{r}
+# plot(data$PRS, data$phenotype)
+# abline(lm(data$phenotype ~ data$PRS), col = "red")
+```
+
+```{r}
+# data$PRS_percentile <- ecdf(data$PRS)(data$PRS) * 100
+# plot(data$PRS_percentile, data$phenotype)
+# abline(lm(data$phenotype ~ data$PRS_percentile), col = "red")
+```
+
+Now run the same linear regression model as before, accounting for covariates, but using the new aggregate PRS value we've created.
+
+```{r}
+model_prs <- glm(phenotype ~ PRS + age + sex + PC1 + PC2 + PC3 + PC4 + PC5, data=data)
+summary(model_prs)
+```
+
+Take a look at the output from the model. What do you notice about this model compared to the single SNP models?
+
+## Questions?
